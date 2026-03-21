@@ -84,21 +84,32 @@ NanoInfer INT8 reaches parity with TensorRT FP16 — without using TensorRT. The
 
 ```
 nanoinfer/
+├── nanoinfer/
+│   ├── __init__.py
+│   ├── nanoinfer.pyi          # Show autocompletion and type hints for C++ extension
 ├── src/
 │   ├── kernels/
 │   │   ├── gemm.cu            # Tiled GEMM, TILE_SIZE=16 and 32
+|   |   ├── gemm.h
 │   │   ├── softmax.cu         # Naive, safe, and online softmax
+│   │   ├── softmax.h
 │   │   ├── attention.cu       # Flash Attention v1/v2
+│   │   ├── attention.h
 │   │   └── quantize.cu        # INT8 GEMM with dp4a
+│   │   └── quantize.h
 │   ├── layers/
 │   │   ├── linear.cu          # Linear layer using custom GEMM
 │   │   ├── layernorm.cu       # Fused LayerNorm kernel
 │   │   └── embedding.cu       # Token + positional embedding
 │   ├── engine/
 │   │   ├── model.cpp          # GPT-2 model assembly
+│   │   ├── model.h
 │   │   ├── kvcache.cpp        # Paged KV-cache allocator
+│   │   ├── kvcache.h
 │   │   └── sampler.cpp        # Top-k / top-p sampling
+│   │   └── sampler.h
 │   └── bindings/
+│       ├── CMakeLists.txt
 │       └── python.cpp         # pybind11 Python interface
 ├── benchmarks/
 │   ├── bench_gemm.cu          # GEMM vs cuBLAS
