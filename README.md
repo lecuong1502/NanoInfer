@@ -300,7 +300,7 @@ __global__ void layernorm_linear_fused(
 
 **Measured speedup:** 1.4× on GPT-2 hidden layers (H=768→3072) at batch=8, seq=512 on A100. The gain scales with sequence length — longer sequences mean more redundant HBM traffic to eliminate.
 
-**Why this matters at NVIDIA:** Layer fusion is the primary technique behind TensorRT's performance advantage. Every fused kernel in TensorRT's graph optimizer follows the same principle: keep intermediate results on-chip, minimize HBM touches. Writing this from scratch demonstrates you understand *why* TensorRT is fast, not just how to use it.
+**Importance:** Layer fusion is the primary technique behind TensorRT's performance advantage. Every fused kernel in TensorRT's graph optimizer follows the same principle: keep intermediate results on-chip, minimize HBM touches. Writing this from scratch help me understand *why* TensorRT is fast, not just how to use it.
 
 
 
