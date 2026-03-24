@@ -86,7 +86,7 @@ NanoInfer INT8 reaches parity with TensorRT FP16 — without using TensorRT. The
 nanoinfer/
 ├── nanoinfer/
 │   ├── __init__.py
-│   ├── nanoinfer.pyi          # Show autocompletion and type hints for C++ extension
+│   └── nanoinfer.pyi          # Show autocompletion and type hints for C++ extension
 ├── src/
 │   ├── kernels/
 │   │   ├── gemm.cu            # Tiled GEMM, TILE_SIZE=16 and 32
@@ -95,7 +95,7 @@ nanoinfer/
 │   │   ├── softmax.h
 │   │   ├── attention.cu       # Flash Attention v1/v2
 │   │   ├── attention.h
-│   │   └── quantize.cu        # INT8 GEMM with dp4a
+│   │   ├── quantize.cu        # INT8 GEMM with dp4a
 │   │   └── quantize.h
 │   ├── layers/
 │   │   ├── linear.cu          # Linear layer using custom GEMM
@@ -106,7 +106,7 @@ nanoinfer/
 │   │   ├── model.h
 │   │   ├── kvcache.cpp        # Paged KV-cache allocator
 │   │   ├── kvcache.h
-│   │   └── sampler.cpp        # Top-k / top-p sampling
+│   │   ├── sampler.cpp        # Top-k / top-p sampling
 │   │   └── sampler.h
 │   └── bindings/
 │       ├── CMakeLists.txt
@@ -124,7 +124,7 @@ nanoinfer/
 ├── tools/
 │   └── profile.sh             # Nsight Systems profiling script
 ├── CMakeLists.txt
-└── setup.py
+└── seto action is required to participate. If you’re on an eligible plan, the doubled usage is automatically applied.up.py
 ```
 
 ---
@@ -141,7 +141,7 @@ Optional for benchmarking:
 - cuBLAS (for comparison baselines)
 - NVIDIA Nsight Systems (for profiling)
 
----
+---o action is required to participate. If you’re on an eligible plan, the doubled usage is automatically applied.
 
 ## Build
 
