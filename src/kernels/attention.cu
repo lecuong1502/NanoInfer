@@ -82,5 +82,126 @@ __global__ void flash_attention_kernel(
     __syncthreads();
 
     // Iterate through each KV block
-    
+    int num_kv_blocks = (N + BLOCK_KV - 1) / BLOCK_KV;
+
+    for (int kv_block = 0; kv_block < num_kv_blocks; kv_block++) {
+        int kv_start = kv_block * BLOCK_KV;
+        int kv_end = min(kv_start + BLOCK_KV, N);
+
+        // Casual mask: Ignore all K/V blocks after the current Q block.
+        // No need to compute attention with future tokens
+        if (causal && kv_start > q_end - 1) break;
+
+        // Load K block to shared memory
+        for (int i = threadIdx.x; i < (kv_end - kv_start) * d; i += blockDim.x) {
+            int ki = i / d;
+            int di = i % d;
+            sK[ki * d + di] = K[(kv_start + ki) * d + di];
+        }
+
+        // Load V block to shared memory
+        for (int i = threadIdx.x; i < (kv_end - kv_start) * d; i += blockDim.x) {
+            int vi = i / d;
+            int di = i % d;
+            sV[vi * d + di] = V[(kv_start + vi) * d + di];
+        }
+
+        __syncthreads();
+
+        // Compute attention scores and update output (online softmax)
+        // Each thread handles 1 query wor in Q block
+        for (int qi = threadIdx.x; qi < q_end - q_start; qi += blockDim.x) {
+            float m_new = m[qi];
+
+            // Compute scores: S[qi, kj] = Q[qi] · K[kj] * scale
+            // Find the new maximum simultaneously
+            float scores[BLOCK_KV];
+            for (int kj = 0; kj < kv_end - kv_start; kj++) {
+                // Casual mask per-element: query in position (q_start + qi)
+                // Only attend to key in position <= (q_start + qi)
+                if (causal && (kv_start + kj) > (q_start + qi)) {
+                    scores[kj] = -FLT_MAX;
+                    continue;
+                }
+
+                float s = 0.0f;
+                for (int di = 0; di < d; di++) {
+                    s += sQ[qi * d + di] * sK[kj * d + di];
+                }
+                scores[kj] = s * scale;
+                m_new = fmaxf(m_new, scores[kj]);
+            }
+
+            // Online softmax update:
+            // Rescale ole accumulator according to new max
+            float l_new = l[qi] * expf(m[qi] - m_new);
+            for (int di = 0; di < d; di++) {
+                acc[qi * d + di] *= expf(m[qi] - m_new);
+            }
+
+            // Add a contributrion from this KV Block
+            for (int kj = 0; kj < kv_end - kv_start; kj++) {
+                if (scores[kj] == -FLT_MAX) continue;   // masked out
+                float p = expf(scores[kj] - m_new);
+                l_new += p;
+                for (int di = 0; di < d; di++) {
+                    acc[qi * d + di] += p * sV[kj * d + di];
+                }
+            }
+
+            // Update running statistics
+            m[qi] = m_new;
+            l[qi] = l_new;
+        }
+        __syncthreads();
+    }
+
+    // Write output to HBM — normalize by l (denominator of softmax)
+    // This is the only part that writes to HBM in the entire kernel
+    for (int qi = threadIdx.x; qi < q_end - q_start; qi += blockDim.x) {
+        for (int di = 0; di < d; di++) {
+            O[(q_start + qi) * d + di] = acc[qi * d + di] / l[qi];
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// Host launcher
+// -------------------------------------------------------------
+void launch_flash_attention(
+    const float* d_Q,   // [B x H x N x d]
+    const float* d_K,
+    const float* d_V,
+    float* d_O,
+    int B, int H, int N, int d,
+    bool causal
+) {
+    float scale = 1.0f / sqrtf((float)d);
+
+    // Shared memory: Q tile + K tile + V tile
+    size_t smem_bytes = (BLOCK_Q + 2 * BLOCK_KV) * d * sizeof(float);
+
+    // Blocks: each block each Q-tile, multiple with B*H to cover the entire batch/heads
+    int q_blocks = (N + BLOCK_Q - 1) / BLOCK_Q;
+    int total_blocks = B * H * q_blocks;
+
+    // 128 threads per block — each thread handles 1 query row in tile
+    int threads = 128;
+
+    // Kernel doesn't directly recieve B, H — use blockIdx to compute offset
+    // Simplify: traverse B and H at the host (acceptable with small B and H)
+    int stride_BH = N * d;  // stride among heads/batchs in flat array
+
+    for (int b = 0; b < B; b++) {
+        for (int h = 0; h < H; h++) {
+            int offset = (b * H + h) * stride_BH;
+            flash_attention_kernel<<<q_blocks, threads, smem_bytes>>>(
+                d_Q + offset,
+                d_K + offset,
+                d_V + offset,
+                d_O + offset,
+                N, d, causal, scale
+            );
+        }
+    }
 }
