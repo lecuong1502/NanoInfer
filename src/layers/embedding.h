@@ -17,7 +17,7 @@ void launch_token_embedding(
 // pos_weight: [max_seq_len x d_model]
 void launch_positional_embedding(
     const float* d_pos_weight,
-    float*       d_output,     // modified in-place
+    float* d_output,     // modified in-place
     int seq_len, int d_model,
     int position_offset = 0
 );  // for KV-cache: offset into position table

@@ -6,7 +6,7 @@
 // weight: [out_features x in_features]
 // bias:   [out_features] (nullable)
 // output: [batch x out_features]
-void launch_linearlaunch_linear(
+void launch_linear(
     const float* d_input,
     const float* d_weight,
     const float* d_bias,    // pass nullptr to skip bias
