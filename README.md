@@ -180,7 +180,23 @@ bash tools/profile.sh ./build/benchmarks/bench_attention
 ## Running Tests
 
 ```bash
-pytest tests/ -v
+# Build CUDA tests
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCUDA_ARCHITECTURES=80
+make -j$(nproc)
+
+# Chạy từng test
+./build/tests/test_gemm
+./build/tests/test_softmax
+./build/tests/test_attention
+./build/tests/test_quantize
+
+# Chạy tất cả qua CTest
+ctest --test-dir build -V
+
+# Python tests (sau khi build .so)
+pip install -e ".[dev]"
+pytest tests/test_kernels.py -v
 ```
 
 All correctness tests compare output against PyTorch reference with tolerance `atol=1e-4, rtol=1e-4`.

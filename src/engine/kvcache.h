@@ -5,12 +5,9 @@
 
 enum class KVQuantMode { NONE, MSE, PROD };
 
-// Quantized storage entry for one KV vector (used internally by Impl)
-struct TQProdEntry {
-    std::vector<uint8_t> mse_idx;    // Lloyd-Max indices, one per coord
-    std::vector<int8_t>  qjl_signs;  // QJL sign bits ∈ {-1, +1}, PROD only
-    float                r_norm;     // ‖residual‖₂ scalar,       PROD only
-};
+// Note: TQProdEntry is an internal implementation detail of PagedKVCache.
+// It is defined in kvcache.cpp and not exposed through this header.
+
 
 class PagedKVCache {
 public:

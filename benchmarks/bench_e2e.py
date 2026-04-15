@@ -95,12 +95,15 @@ def bench_pytorch(
     model = model.cuda().eval()
 
     if precision == "int8":
-        # PyTorch int8 via bitsandbytes (approximate comparison)
+        # NOTE: True int8 inference via bitsandbytes requires model-level quantization
+        # (load_in_8bit=True in from_pretrained), not a simple post-hoc layer swap.
+        # I run fp16 as the PyTorch baseline for int8 comparison — this is consistent
+        # with how bitsandbytes reports speedups (vs fp16 compute, not fp32).
         try:
-            import bitsandbytes as bnb
-            model = bnb.nn.Linear8bitLt  # simplified — real usage needs more setup
-            print("  [int8] using bitsandbytes quantization")
-        except:
+            import bitsandbytes  # noqa: F401 — just check it's installed
+            print("  [int8] bitsandbytes found — running fp16 PyTorch as baseline")
+            print("         (full int8 baseline needs load_in_8bit=True at load time)")
+        except ImportError:
             print("  [int8] bitsandbytes not found — running fp16 for comparison")
     
     input_ids = tokenizer.encode(prompt, return_tensors="pt").cuda()

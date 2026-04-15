@@ -89,12 +89,33 @@ void launch_linear(
 // Real speedup: ~1.4x unfused on A100
 // ---------------------------------------------------------
 
-// Warp reduce helpers (inline to avoid overhead function call)
-__device__ __forceinline__ float warp_sum(float v) {
-    for (int off = 16; off > 0; off >>= 1) {
+// ---------------------------------------------------------
+// Warp + block level reduction helpers (same pattern as layernorm.cu)
+// ---------------------------------------------------------
+__device__ __forceinline__ float _fused_warp_sum(float v) {
+    #pragma unroll
+    for (int off = 16; off > 0; off >>= 1)
         v += __shfl_down_sync(0xffffffff, v, off);
-    }
     return v;
+}
+
+// Block-level sum — broadcasts the result to all threads via smem
+__device__ float _fused_block_sum(float v, float* smem) {
+    int lane    = threadIdx.x % 32;
+    int warp_id = threadIdx.x / 32;
+
+    v = _fused_warp_sum(v);
+    if (lane == 0) smem[warp_id] = v;
+    __syncthreads();
+
+    int num_warps = (blockDim.x + 31) / 32;
+    v = (threadIdx.x < num_warps) ? smem[threadIdx.x] : 0.0f;
+    if (warp_id == 0) v = _fused_warp_sum(v);
+
+    // Broadcast to all threads
+    if (threadIdx.x == 0) smem[0] = v;
+    __syncthreads();
+    return smem[0];
 }
 
 __global__ void layernorm_linear_fused_kernel(
@@ -113,55 +134,41 @@ __global__ void layernorm_linear_fused_kernel(
 
     const float* x = input + row * hidden;
 
-    // Shared memory: save normalized values to use in multiplication
-    // Not write to HBM — This is all scores of fused kernel
-    extern __shared__ float x_norm[];   // [hidden]
+    // Shared memory layout:
+    //   [0 .. 31]       : smem scratchpad for block reduction (32 warps max)
+    //   [32 .. 32+hidden): x_norm buffer (normalized values, never written to HBM)
+    extern __shared__ float smem[];
+    float* smem_scratch = smem;          // [32] for warp partial sums
+    float* x_norm = smem + 32;    // [hidden]
 
-    // Step 1: Compute mean
-    float mean = 0.0f;
-    for (int i = threadIdx.x; i < hidden; i += blockDim.x) {
-        mean += x[i];
-    }
+    // Step 1: Compute mean (block-wide)
+    float sum = 0.0f;
+    for (int i = threadIdx.x; i < hidden; i += blockDim.x)
+        sum += x[i];
+    float mean = _fused_block_sum(sum, smem_scratch) / hidden;
 
-    // Warp reduce → block reduce
-    mean = warp_sum(mean);
-    __shared__ float smem_mean;
-    if (threadIdx.x == 0) smem_mean = mean;
-    __syncthreads();
-    mean = smem_mean / hidden;
-
-    // Step 2: Compute variance
-    float var = 0.0f;
+    // Step 2: Compute variance (block-wide)
+    float var_sum = 0.0f;
     for (int i = threadIdx.x; i < hidden; i += blockDim.x) {
         float diff = x[i] - mean;
-        var += diff * diff;
+        var_sum += diff * diff;
     }
-    var = warp_sum(var);
-    __shared__ float smem_var;
-    if (threadIdx.x == 0) smem_var = var;
-    __syncthreads();
-    var = smem_var / hidden;
+    float var = _fused_block_sum(var_sum, smem_scratch) / hidden;
+    float inv_std = rsqrtf(var + eps);
 
-    float inv_std = rsqrtf(var + eps);  //rsqrtf: hardware reciprocal sqrt, faster than 1/sqrtf
-
-    // Step 3: Normalize + scale + shift → save to shared memory
-    // x_norm lives in shared memory (~100x faster than HBM)
-    // Never write to HBM
-    for (int i = threadIdx.x; i < hidden; i += blockDim.x) {
+    // Step 3: Normalize + affine → write to shared memory only (no HBM)
+    for (int i = threadIdx.x; i < hidden; i += blockDim.x)
         x_norm[i] = (x[i] - mean) * inv_std * gamma[i] + beta[i];
-    }
     __syncthreads();
 
-    // Step 4: Linear projection is read from shared memory
+    // Step 4: Linear projection reading from shared memory
     // Each thread computes 1 output element: output[row][j] = dot(x_norm, weight[j])
     for (int j = threadIdx.x; j < out_features; j += blockDim.x) {
         float acc = 0.0f;
-        // Read weight and x_norm from shared memory — not read HBM moreover
         for (int i = 0; i < hidden; i++)
             acc += x_norm[i] * weight[j * hidden + i];
         if (bias != nullptr)
             acc += bias[j];
-        // Write output to HBM
         output[row * out_features + j] = acc;
     }
 }
@@ -176,11 +183,10 @@ void launch_layernorm_linear_fused(
     int batch, int hidden, int out_features,
     float eps
 ) {
-    // Shared memory = hidden floats for x_norm
-    size_t smem = hidden * sizeof(float);
+    // Shared memory = 32 floats (reduction scratch) + hidden floats (x_norm)
+    size_t smem = (32 + hidden) * sizeof(float);
 
-    // 1 block per row, 256 threads per block
-    // Threads use stride loop that cover hidden > 256
+    // 1 block per token, 256 threads per block
     layernorm_linear_fused_kernel<<<batch, 256, smem>>>(
         d_input, d_gamma, d_beta,
         d_weight, d_bias, d_output,

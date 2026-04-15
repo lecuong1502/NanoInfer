@@ -74,6 +74,7 @@ add_library(nanoinfer_kernels STATIC
     src/kernels/softmax.cu
     src/kernels/attention.cu
     src/kernels/quantize.cu
+    src/layers/activation.cu      # launch_add, launch_gelu (was missing!)
     src/layers/linear.cu
     src/layers/layernorm.cu
     src/layers/embedding.cu
@@ -129,6 +130,31 @@ foreach(bench bench_gemm bench_softmax bench_attention)
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/benchmarks
     )
 endforeach()
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+add_executable(test_gemm      tests/test_gemm.cu)
+add_executable(test_softmax   tests/test_softmax.cu)
+add_executable(test_attention tests/test_attention.cu)
+add_executable(test_quantize  tests/test_quantize.cu)
+
+foreach(test test_gemm test_softmax test_attention test_quantize)
+    target_compile_options(${test} PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:${NANOINFER_CUDA_FLAGS}>
+    )
+    target_link_libraries(${test} PRIVATE nanoinfer_kernels)
+    set_target_properties(${test} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests
+    )
+endforeach()
+
+# CTest integration — run with: ctest --test-dir build -V
+enable_testing()
+add_test(NAME test_gemm      COMMAND $<TARGET_FILE:test_gemm>)
+add_test(NAME test_softmax   COMMAND $<TARGET_FILE:test_softmax>)
+add_test(NAME test_attention COMMAND $<TARGET_FILE:test_attention>)
+add_test(NAME test_quantize  COMMAND $<TARGET_FILE:test_quantize>)
 
 # ---------------------------------------------------------------------------
 # Python bindings (optional — only if pybind11 is available)
