@@ -28,6 +28,7 @@ set(BINDING_SOURCES
     ../kernels/softmax.cu
     ../kernels/attention.cu
     ../kernels/quantize.cu
+    ../layers/activation.cu
     ../layers/linear.cu
     ../layers/layernorm.cu
     ../layers/embedding.cu
@@ -55,10 +56,12 @@ target_compile_options(nanoinfer PRIVATE
         --use_fast_math
         -std=c++17
         --compiler-options -fPIC
-        # Target Ampere (A100 = sm_80) and Ampere consumer (RTX 3090 = sm_86).
-        # Add -gencode arch=compute_90,code=sm_90 for H100 (FP8 support).
+        # Ampere: A100 (sm_80), RTX 3090/A6000 (sm_86)
+        # Ada:    RTX 4050/4090 (sm_89)
+        # Add sm_90 for H100 (FP8 support)
         -gencode arch=compute_80,code=sm_80
         -gencode arch=compute_86,code=sm_86
+        -gencode arch=compute_89,code=sm_89
     >
     $<$<COMPILE_LANGUAGE:CXX>:
         -O3

@@ -1,0 +1,7 @@
+numpy>=1.23
+pybind11>=2.11
+
+[dev]
+pytest>=7.0
+torch>=2.0
+transformers>=4.35
