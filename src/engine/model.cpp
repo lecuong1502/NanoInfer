@@ -91,7 +91,7 @@ struct GPT2Model::Impl {
 
     ~Impl() { free_all(); }
 
-    void load_weights(const std::string& path) {
+    void load_weights(const std::string& /*path*/) {
         // TODO: implement weight loading from .bin file (HuggingFace safetensors
         // or raw binary dump from convert_weights.py)
         // For now: allocate and zero-initialize as placeholder

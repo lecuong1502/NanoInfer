@@ -461,10 +461,10 @@ void PagedKVCache::retrieve(
                cudaMemcpyHostToDevice);
 }
 
-float* PagedKVCache::key_ptr(int layer) const {
+float* PagedKVCache::key_ptr(int /*layer*/) const {
     return impl_->d_key_scratch;
 }
 
-float* PagedKVCache::value_ptr(int layer) const {
+float* PagedKVCache::value_ptr(int /*layer*/) const {
     return impl_->d_value_scratch;
 }

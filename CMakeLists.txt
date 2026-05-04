@@ -53,6 +53,7 @@ set(NANOINFER_CUDA_FLAGS
 find_package(CUDAToolkit REQUIRED)
 message(STATUS "CUDA toolkit: ${CUDAToolkit_VERSION} at ${CUDAToolkit_LIBRARY_DIR}")
  
+set(PYBIND11_FINDPYTHON ON)   # Use modern FindPython instead of deprecated FindPythonInterp
 find_package(pybind11 QUIET)
 if(pybind11_FOUND)
     message(STATUS "pybind11 found — Python bindings will be built")

@@ -1,1 +1,22 @@
+# CMake build directory
 build/
+
+# Compiled Python extension (.so / .pyd)
+# Must be rebuilt locally after cloning — not portable across machines/Python versions
+nanoinfer/*.so
+nanoinfer/*.pyd
+
+# Python bytecode cache
+nanoinfer/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+
+# Nsight profiling reports (large binary files)
+reports/*.nsys-rep
+reports/*.ncu-rep
+reports/*.csv
+
+# Python packaging artifacts
+*.egg-info/
+dist/
