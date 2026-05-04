@@ -20,3 +20,7 @@ reports/*.csv
 # Python packaging artifacts
 *.egg-info/
 dist/
+
+# Ignore benchmark reports and sqlite databases
+*.sqlite
+reports/
