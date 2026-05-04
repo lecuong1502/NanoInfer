@@ -164,15 +164,15 @@ __global__ void softmax_safe_kernel(
 }
 
 // -----------------------------------------------------------
-// Online Softmax — 1 pass, numerically stable
-// 
-// Key Insight: m_new = max(m_old, x_i)
-//              d_new = d_old * exp(m_old - m_new) + exp(x_i - m_new)
-
-// Prove correctness: end the loop, return denominator of Safe Softmax
-// d = sum_i exp(x_i - m) with m = max(x_0, ..., x_{N-1})
-// This is the Flash Attention platform
+// Online Softmax v2 — 1 pass, numerically stable, vectorized
+//
+// Optimizations vs v1:
+//   1. float4 vectorized loads/stores  → 4x memory coalescing efficiency
+//   2. #pragma unroll on warp/block reductions → zero loop overhead
+//   3. inv_d = 1/d reciprocal → 1 rcp + N muls instead of N divisions
+//   4. Adaptive block size (256 / 512) via template → better SM occupancy
 // ----------------------------------------------------------
+template <int BLOCK>
 __global__ void softmax_online_kernel(
     const float* __restrict__ input,
     float* __restrict__ output,
@@ -181,55 +181,143 @@ __global__ void softmax_online_kernel(
     int row = blockIdx.x;
     if (row >= rows) return;
 
-    const float* x = input  + row * cols;
-    float* y = output + row * cols;
+    const float* x = input + row * cols;
+    float*       y = output + row * cols;
 
-    // Each thread maintains running private (max, denominator)
-    float m = -FLT_MAX;     // running max
-    float d = 0.0f;         // running denominator = sum(exp(x_i - m))
+    // ---- Pass 1: single-pass online (m, d) update with 2-way ILP ----
+    // Two independent (m0,d0) and (m1,d1) streams process interleaved
+    // elements so the GPU can pipeline expf calls without serial dependency.
+    // float4 path: ONLY when cols % 4 == 0 (alignment guarantee).
+    float m0 = -FLT_MAX, d0 = 0.0f;   // stream 0: even groups
+    float m1 = -FLT_MAX, d1 = 0.0f;   // stream 1: odd  groups
 
-    // Only Pass: Update (m, d) for each element
-    for (int i = threadIdx.x; i < cols; i += blockDim.x) {
-        float xi = x[i];
-        float m_new = fmaxf(m, xi);
-        // Rescale old d according to max before add exp(xi - n_new)
-        d = d * expf(m - m_new) + expf(xi - m_new);
-        m = m_new;
+    if ((cols & 3) == 0) {
+        int cols4 = cols >> 2;
+        // Stream 0: i = 0, 2*BLOCK, 4*BLOCK, ...
+        // Stream 1: i = BLOCK, 3*BLOCK, 5*BLOCK, ...
+        for (int i = threadIdx.x; i < cols4; i += 2 * BLOCK) {
+            // Stream 0
+            float4 v0 = reinterpret_cast<const float4*>(x)[i];
+            #pragma unroll
+            for (int j = 0; j < 4; j++) {
+                float val = (&v0.x)[j];
+                float mn  = fmaxf(m0, val);
+                d0 = d0 * expf(m0 - mn) + expf(val - mn);
+                m0 = mn;
+            }
+            // Stream 1 (independent — no dependency on stream 0)
+            int i1 = i + BLOCK;
+            if (i1 < cols4) {
+                float4 v1 = reinterpret_cast<const float4*>(x)[i1];
+                #pragma unroll
+                for (int j = 0; j < 4; j++) {
+                    float val = (&v1.x)[j];
+                    float mn  = fmaxf(m1, val);
+                    d1 = d1 * expf(m1 - mn) + expf(val - mn);
+                    m1 = mn;
+                }
+            }
+        }
+    } else {
+        // Scalar fallback for non-aligned cols (e.g. vocab size 50257)
+        for (int i = threadIdx.x; i < cols; i += 2 * BLOCK) {
+            float xi = x[i];
+            float mn = fmaxf(m0, xi);
+            d0 = d0 * expf(m0 - mn) + expf(xi - mn);
+            m0 = mn;
+
+            int i1 = i + BLOCK;
+            if (i1 < cols) {
+                float xi1 = x[i1];
+                float mn1 = fmaxf(m1, xi1);
+                d1 = d1 * expf(m1 - mn1) + expf(xi1 - mn1);
+                m1 = mn1;
+            }
+        }
     }
 
-    // Merge (m, d) from all threads - Need to process both max and sum
+    // Merge two streams into one (m, d)
+    float m_new = fmaxf(m0, m1);
+    float d = d0 * expf(m0 - m_new) + d1 * expf(m1 - m_new);
+    float m = m_new;
+
+    // ---- Step 1: warp-level reduce of (m, d) ----
+    #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1) {
-        float m_other = __shfl_down_sync(0xffffffff, m, offset);
-        float d_other = __shfl_down_sync(0xffffffff, d, offset);
-        // Merge 2 running stats: select larger max, rescale another
-        float m_new = fmaxf(m, m_other);
-        d = d * expf(m - m_new) + d_other * expf(m_other - m_new);
+        float m_o = __shfl_down_sync(0xffffffff, m, offset);
+        float d_o = __shfl_down_sync(0xffffffff, d, offset);
+        float m_new = fmaxf(m, m_o);
+        d = d * expf(m - m_new) + d_o * expf(m_o - m_new);
         m = m_new;
     }
 
-    // Broadcast result from thread 0 to all threads in warp
-    m = __shfl_sync(0xffffffff, m, 0);
-    d = __shfl_sync(0xffffffff, d, 0);
+    // ---- Step 2: block-level reduce via shared memory ----
+    __shared__ float warp_m[32];
+    __shared__ float warp_d[32];
 
-    // Normalize: Reread x once to compute output
-    for (int i = threadIdx.x; i < cols; i += blockDim.x) {
-        y[i] = expf(x[i] - m) / d;
+    int lane    = threadIdx.x & 31;
+    int warp_id = threadIdx.x >> 5;
+
+    if (lane == 0) { warp_m[warp_id] = m; warp_d[warp_id] = d; }
+    __syncthreads();
+
+    constexpr int NUM_WARPS = BLOCK / 32;
+    if (warp_id == 0) {
+        m = (lane < NUM_WARPS) ? warp_m[lane] : -FLT_MAX;
+        d = (lane < NUM_WARPS) ? warp_d[lane] :  0.0f;
+
+        #pragma unroll
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            float m_o = __shfl_down_sync(0xffffffff, m, offset);
+            float d_o = __shfl_down_sync(0xffffffff, d, offset);
+            float m_new = fmaxf(m, m_o);
+            d = d * expf(m - m_new) + d_o * expf(m_o - m_new);
+            m = m_new;
+        }
+        if (lane == 0) { warp_m[0] = m; warp_d[0] = d; }
+    }
+    __syncthreads();
+
+    m = warp_m[0];
+    d = warp_d[0];
+
+    // ---- Pass 2: normalize with reciprocal (1 rcp + N muls) ----
+    float inv_d = __frcp_rn(d);     // hardware reciprocal, ~1 cycle
+
+    if ((cols & 3) == 0) {
+        int cols4 = cols >> 2;
+        for (int i = threadIdx.x; i < cols4; i += BLOCK) {
+            float4 v = reinterpret_cast<const float4*>(x)[i];
+            float4 o;
+            o.x = expf(v.x - m) * inv_d;
+            o.y = expf(v.y - m) * inv_d;
+            o.z = expf(v.z - m) * inv_d;
+            o.w = expf(v.w - m) * inv_d;
+            reinterpret_cast<float4*>(y)[i] = o;
+        }
+    } else {
+        for (int i = threadIdx.x; i < cols; i += BLOCK) {
+            y[i] = expf(x[i] - m) * inv_d;
+        }
     }
 }
 
 // ------------------------------------------------------------
-// Host launch — use online softmax (single-pass) as default
+// Host launch — adaptive block size based on row width
 // ------------------------------------------------------------
-void launch_softmax_online (
+void launch_softmax_online(
     const float* d_input,
     float* d_output,
     int rows, int cols
 ) {
-    // Each block processes 1 row — 256 threads per block (8 warps)
-    // cols > 256: each thread processes multiple elements through stride loop
-    int threads = 256;
     int blocks = rows;
-    softmax_online_kernel<<<blocks, threads>>>(d_input, d_output, rows, cols);
+    // 512 threads for wide rows (cols >= 1024) → better SM occupancy;
+    // 256 threads for narrow rows → more blocks in flight per SM.
+    if (cols >= 1024) {
+        softmax_online_kernel<512><<<blocks, 512>>>(d_input, d_output, rows, cols);
+    } else {
+        softmax_online_kernel<256><<<blocks, 256>>>(d_input, d_output, rows, cols);
+    }
 }
 
 void launch_softmax_safe(

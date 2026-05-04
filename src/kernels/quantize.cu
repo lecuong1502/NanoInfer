@@ -150,8 +150,9 @@ void launch_quantize(
     int n
 ) {
     // 256 threads, each thread handles 4 elements → 1024 elements/block
+    // Use ceil(n / (threads*4)) to ensure all elements (including tails) are covered
     int threads = 256;
-    int blocks = (n / 4 + threads - 1) / threads;
+    int blocks = (n + 4 * threads - 1) / (4 * threads);
     quantize_kernel<<<blocks, threads>>>(d_input, d_output, scale, n);
 }
 
