@@ -2,7 +2,19 @@
 
 A lightweight, from-scratch CUDA inference engine for transformer models. No PyTorch, No TensorRT. Just raw CUDA kernels, hand-optimized for performance.
 
-Built as a deep-dive into GPU computing fundamentals - custom GEMM, Flash Attention, INT8 quantization, and a full GPT-2 inference pipeline with Python bindings.
+Built as a deep-dive into GPU computing fundamentals — custom GEMM, Flash Attention, INT8 quantization, and a full GPT-2 inference pipeline with Python bindings.
+
+---
+
+## Documentation
+
+| | |
+|---|---|
+| [Getting Started](docs/getting-started.md) | Installation, build, quick start |
+| [API Reference](docs/api-reference.md) | Full Python API docs |
+| [Architecture](docs/architecture.md) | Kernel internals and design decisions |
+| [Benchmarks](docs/benchmarks.md) | Results, methodology, how to reproduce |
+| [Contributing](docs/contributing.md) | Adding kernels, models, or fixes |
 
 ---
 
@@ -124,7 +136,7 @@ nanoinfer/
 ├── tools/
 │   └── profile.sh             # Nsight Systems profiling script
 ├── CMakeLists.txt
-└── seto action is required to participate. If you’re on an eligible plan, the doubled usage is automatically applied.up.py
+└── setup.py
 ```
 
 ---
@@ -141,7 +153,7 @@ Optional for benchmarking:
 - cuBLAS (for comparison baselines)
 - NVIDIA Nsight Systems (for profiling)
 
----o action is required to participate. If you’re on an eligible plan, the doubled usage is automatically applied.
+---
 
 ## Build
 
